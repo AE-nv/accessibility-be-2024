@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "chrome-launcher": "^1.1.2",
+    "csv-parser": "^3.0.0",
+    "csv-writer": "^1.6.0",
+    "lighthouse": "^12.2.1",
+    "openai": "^4.69.0",
+    "puppeteer": "^23.6.1"
+  }
+}
