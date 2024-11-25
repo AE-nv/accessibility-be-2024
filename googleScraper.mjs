@@ -1,29 +1,9 @@
 import { launch as launchPuppeteer } from "puppeteer";
 import { launch as launchChrome } from "chrome-launcher";
 import { createObjectCsvWriter as createCsvWriter } from "csv-writer";
+import fs from 'fs';
+import csv from 'csv-parser';
 import lighthouse from "lighthouse";
-import OpenAI from "openai";
-
-const openAIClient = new OpenAI({
-  apiKey: "OPENAI_API_KEY", // TODO replace with OpenAI API key
-});
-
-async function categorizeDescription(description) {
-  if (!description) return "Uncategorized";
-
-  const prompt = `Categorize the following website description into one of the following categories: E-commerce, Blog, News, Corporate, Government, Health, Education, Technology, Entertainment, or Other.\n\nDescription: "${description}"\n\nCategory:`;
-  try {
-    const response = await openAIClient.chat.completions.create({
-      model: "gpt-4o-mini", // Use GPT-3 or a suitable model
-      messages: [{ role: "user", content: prompt }],
-    });
-    const category = response.data.choices[0].text.trim();
-    return category || "Uncategorized";
-  } catch (error) {
-    console.error("Error categorizing description:", error);
-    return "Uncategorized";
-  }
-}
 
 async function runLighthouse(url) {
   const chrome = await launchChrome({ chromeFlags: ["--headless"] });
@@ -64,32 +44,6 @@ async function runLighthouse(url) {
   return { accessibilityScore, accessibilityIssues };
 }
 
-async function appendAccessibilityScores(results) {
-  let resultsWithAccessibility = [];
-
-  for (const result of results) {
-    try {
-      const { accessibilityScore, accessibilityIssues } = await runLighthouse(
-        result.url
-      );
-      const category = await categorizeDescription(result.description);
-      console.log(
-        `URL: ${result.url}, Accessibility Score: ${accessibilityScore}, Issues: ${accessibilityIssues.length}, Category: ${category}`
-      );
-      resultsWithAccessibility.push({
-        ...result,
-        accessibilityScore,
-        accessibilityIssues: JSON.stringify(accessibilityIssues),
-        category,
-      });
-    } catch (error) {
-      console.error(`Error running Lighthouse on ${result.url}:`, error);
-    }
-  }
-
-  return resultsWithAccessibility;
-}
-
 async function scrapeGoogle(searchQuery, numPages) {
   const browser = await launchPuppeteer({ headless: true });
   const page = await browser.newPage();
@@ -107,48 +61,36 @@ async function scrapeGoogle(searchQuery, numPages) {
     ],
   });
 
+  let urls = [];
   let results = [];
 
-  for (let i = 0; i < numPages; i++) {
-    const start = i * 10;
-    const url = `https://www.google.com/search?q=${searchQuery}&start=${start}`;
+  fs.createReadStream('top10-belgian.csv')
+    .pipe(csv())
+    .on('data', (row) => {
+      urls.push(row['Domain'])
+    })
+    .on('end', async () => {
+      console.log(urls);
 
-    await page.goto(url, { waitUntil: "domcontentloaded" });
-
-    // Extract results
-    const pageResults = await page.evaluate(async () => {
-      let results = [];
-      const items = document.querySelectorAll("div.g");
-
-      for (let i = 0; i < items.length; i++) {
-        const title = items[i].querySelector("h3")
-          ? items[i].querySelector("h3").innerText
-          : "";
-        const url = items[i].querySelector("a")
-          ? items[i].querySelector("a").href
-          : "";
-        const description = items[i].querySelector(".VwiC3b")
-          ? items[i].querySelector(".VwiC3b").innerText
-          : "";
-
-        if (title && url) {
-          results.push({ title, url, description });
-        }
+      for (const url of urls){
+        console.log(url);
+        try {
+          const { accessibilityScore, accessibilityIssues } = await runLighthouse("https://" + url);
+            results.push({
+              url: url,
+              accessibilityScore: accessibilityScore,
+              accessibilityIssues: JSON.stringify(accessibilityIssues)
+            })
+          } catch (error){
+            console.error(`Error running Lighthouse for ${url}: `, error)
+          }
       }
-
-      return results;
-    });
-
-    results = results.concat(pageResults);
-  }
-
-  results = await appendAccessibilityScores(results);
-
-  await browser.close();
-
-  // Write to CSV file
-  await csvWriter.writeRecords(results);
-  console.log("Results saved to accessibility_results.csv");
+      
+      await browser.close();
+      // Write to CSV file
+      await csvWriter.writeRecords(results);
+      console.log("Results saved to accessibility_results.csv");
+    })
 }
 
 const searchQuery = "site:.be";
